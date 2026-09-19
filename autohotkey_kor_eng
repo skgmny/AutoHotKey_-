@@ -1,0 +1,132 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+global imeGui := 0
+global shadowGuis := []
+
+~vk15::
+{
+    ; 키를 누른 직후에는 아직 전환이 반영되지 않을 수 있어 살짝 지연
+    SetTimer(CheckAndShowIME, -50)
+}
+
+CheckAndShowIME()
+{
+    isKorean := GetIMEStatus()
+
+    if (isKorean)
+        ShowIMEStatus("가", "한글", "0E9F9F")
+    else
+        ShowIMEStatus("A", "ENG", "333333")
+}
+
+; 현재 포커스된 창의 실제 한/영 상태를 IME 창에 메시지를 보내 조회
+GetIMEStatus()
+{
+    hwnd := WinExist("A")
+    if (!hwnd)
+        return false
+
+    ; 해당 창을 담당하는 IME 기본 창 핸들 얻기
+    imeHwnd := DllCall("imm32\ImmGetDefaultIMEWnd", "ptr", hwnd, "ptr")
+    if (!imeHwnd)
+        return false
+
+    ; WM_IME_CONTROL(0x283) + IMC_GETCONVERSIONMODE(0x1) 로 변환 모드 조회
+    mode := DllCall("user32\SendMessage", "ptr", imeHwnd, "uint", 0x283, "ptr", 0x1, "ptr", 0, "ptr")
+
+    ; 최하위 비트가 1이면 한글(네이티브 입력) 모드
+    return (mode & 1) ? true : false
+}
+
+ShowIMEStatus(iconText, languageText, textColor)
+{
+    global imeGui, shadowGuis
+
+    ; 기존 창들 닫기
+    if (IsObject(imeGui))
+    {
+        try imeGui.Destroy()
+    }
+    for shadowGui in shadowGuis
+    {
+        try shadowGui.Destroy()
+    }
+    shadowGuis := []
+
+    boxSize := 240
+    baseRadius := 32
+
+    ; 기존에 마음에 들었던 위치 유지 (박스 기준 좌표)
+    MonitorGetWorkArea(, &left, &top, &right, &bottom)
+    x := left + ((right - left) - boxSize) // 2 - 30
+    y := top + ((bottom - top) - boxSize) // 2 - 40
+
+        ; ★ 그림자 레이어들 먼저 생성 (큰 것부터 → 작은 것 순서로 쌓기)
+    ; [증가폭, 알파(투명도, 훨씬 낮게 → 은은하게)]
+    layers := [[24, 3], [19, 4], [14, 5], [9, 7], [5, 9], [2, 11]]
+
+    for layer in layers
+    {
+        grow := layer[1]
+        alpha := layer[2]
+
+        shGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20") ; E0x20 = WS_EX_TRANSPARENT(클릭 통과)
+        shGui.BackColor := "8C8C8C"  ; 순수 검정 대신 중간 회색
+        shSize := boxSize + (grow * 2)
+        shRadius := baseRadius + grow
+
+        shGui.Show("Hide w" shSize " h" shSize)
+        WinSetRegion("0-0 w" shSize " h" shSize " r" shRadius "-" shRadius, shGui.Hwnd)
+        WinSetTransparent(alpha, shGui.Hwnd)
+
+        shX := x - grow
+        shY := y - grow
+        shGui.Show("x" shX " y" shY " w" shSize " h" shSize " NoActivate")
+
+        shadowGuis.Push(shGui)
+    }
+
+
+    ; 본체(흰 박스) 생성 - 그림자들 위에 마지막으로 그려서 맨 앞에 오도록
+    newGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+    newGui.BackColor := "FFFFFF"
+    newGui.MarginX := 0
+    newGui.MarginY := 0
+
+    icon := newGui.Add("Text", "x-40 y18 w240 h100 Center", iconText)
+    icon.SetFont("s40 Bold", "맑은 고딕")
+    icon.Opt("c" textColor)
+
+    language := newGui.Add("Text", "x-40 y100 w240 h30 Center", languageText)
+    language.SetFont("s16 Bold", "맑은 고딕")
+    language.Opt("c" textColor)
+
+    newGui.Show("Hide w240 h240")
+    WinSetRegion("0-0 w240 h240 r" baseRadius "-" baseRadius, newGui.Hwnd)
+    newGui.Show("x" x " y" y " w240 h240 NoActivate")
+
+    imeGui := newGui
+
+    ; 1초 후 숨기기
+    SetTimer(HideIMEStatus, -1000)
+}
+
+HideIMEStatus()
+{
+    global imeGui, shadowGuis
+
+    if (IsObject(imeGui))
+    {
+        try imeGui.Destroy()
+        imeGui := 0
+    }
+    for shadowGui in shadowGuis
+    {
+        try shadowGui.Destroy()
+    }
+    shadowGuis := []
+
+    ; ★ 창을 지운 뒤 화면을 강제로 다시 그리게 해서 잔상(고스트) 제거
+    DllCall("user32\RedrawWindow", "ptr", 0, "ptr", 0, "ptr", 0, "uint", 0x1 | 0x4 | 0x80 | 0x100)
+}
